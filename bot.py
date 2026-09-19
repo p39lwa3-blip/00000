@@ -1060,22 +1060,6 @@ async def on_message(message):
 async def on_guild_channel_create(ch):
     if isinstance(ch,discord.TextChannel): asyncio.create_task(delayed(ch))
 
-@bot.event
-async def on_guild_channel_update(before,after):
-    if not isinstance(after,discord.TextChannel) or before.name==after.name: return
-    # 只對「仍然是 ticket-編號 且尚未記錄」的頻道排程一次。
-    # 不直接處理改名事件，避免結單／其他狀態改名被誤判成開單。
-    if ticket_record(after): return
-    if is_ticket_candidate(after): asyncio.create_task(delayed(after))
-
-async def seed():
-    # 啟動時只登記現有的 ticket-編號，不發面板、不自動改名。
-    for g in bot.guilds:
-        for ch in g.text_channels:
-            if ticket_record(ch): continue
-            if is_ticket_candidate(ch):
-                remember(ch,ticket_no(ch.name))
-
 
 a=asyncio.Lock()
 @tasks.loop(seconds=60)
@@ -1102,15 +1086,6 @@ async def payment_reminder_loop():
 @payment_reminder_loop.before_loop
 async def before_payment_reminder(): await bot.wait_until_ready()
 
-@tasks.loop(seconds=15)
-async def scanner():
-    for g in bot.guilds:
-        for ch in g.text_channels:
-            if ticket_record(ch): continue
-            if is_ticket_candidate(ch): asyncio.create_task(delayed(ch))
-@scanner.before_loop
-async def before_scan(): await bot.wait_until_ready()
-
 
 @bot.event
 async def on_error(event_method, *args, **kwargs):
@@ -1121,7 +1096,9 @@ async def on_error(event_method, *args, **kwargs):
 @bot.event
 async def on_ready():
     if not getattr(bot,'views',False):
-        bot.add_view(ProductView())
+        bot.add_view(ServiceTypeView())
+        bot.add_view(CoinProductView())
+        bot.add_view(BoostTierView())
         for r in q("SELECT id FROM orders WHERE status='待付款'",(),True):
             bot.add_view(PaymentMethodView(int(r['id'])))
             bot.add_view(PaymentView(int(r['id'])))
@@ -1136,8 +1113,6 @@ async def on_ready():
             print(f'伺服器同步成功：{g.name} ({g.id})，{len(synced)} 個指令')
         except Exception as e:
             print('sync error',g.id,repr(e))
-    if not getattr(bot,'seeded',False): await seed(); bot.seeded=True
-    if not scanner.is_running(): scanner.start()
     if not payment_reminder_loop.is_running(): payment_reminder_loop.start()
     print('登入：',bot.user,'servers',len(bot.guilds))
 
